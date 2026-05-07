@@ -32,7 +32,7 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
   ```
 - **TX completion drain:** Drained per RX poll iteration with a bounded per-iteration cap; UMEM frames are recycled to the FILL ring immediately on completion to prevent UMEM starvation under sustained load.
 - **Wakeup model:** `XDP_USE_NEED_WAKEUP` enabled; busy-poll on dataplane cores. Syscall wakeup paths are a fallback for low-rate queues.
-- **BPF map specs:** `xsks_map` sized to NIC queue count; pinned at `/sys/fs/bpf/xdp-prox/xsks_map`. Required capabilities (`CAP_BPF`, `CAP_NET_ADMIN`) are dropped after attach; `CAP_IPC_LOCK` is retained for UMEM mlock.
+- **BPF map specs:** `xsks_map` is `BPF_MAP_TYPE_XSKMAP`, sized to NIC queue count, pinned at `/sys/fs/bpf/xdp-prox/xsks_map`. XDP program type is `BPF_PROG_TYPE_XDP`, attached to the physical NIC in native (driver) mode via `XDP_FLAGS_DRV_MODE`. Required capabilities (`CAP_BPF`, `CAP_NET_ADMIN`) are dropped after attach; `CAP_IPC_LOCK` is retained for UMEM mlock.
 - **Detach policy:** The XDP program remains attached on dataplane exit so traffic continues to fail-closed-DROP until explicitly detached by an operator command.
 
 ### 3.2 Module: Flow Classifier & Conntrack
@@ -53,7 +53,7 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
 2. **Parse & Anti-Spoof:** Validate L2/L3 bounds and VM identity.
 3. **Lookup:** Flow Classifier check.
 4. **Slow Path:** ACLs, metadata DPI, Conntrack creation.
-5. **Proxy/NAT:** Rewrite headers; push to proxy namespace if required.
+5. **Forward Action:** Apply L3 routing rewrites (NAT, if any) and per-tenant rate limits. Flows tagged `forward-to-proxy` are queued for the deferred proxy delivery path (see DESIGN.md §2); in v1 they are dropped at this stage with reason `proxy_deferred`.
 6. **Egress:** TX backpressure handling (tail-drop if full).
 
 ## 5. Performance Targets & Budgets
@@ -67,5 +67,5 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
 - **Rust Safety:** Unsafe boundaries are explicitly audited. Packet buffers wrapped in safe types holding length and headroom.
 
 ## 7. Security Considerations
-- **Fail-Closed:** Default drop on missing config, dead proxy, or unparsed headers.
+- **Fail-Closed:** Default drop on missing config or unparsed headers. Control-plane crash retains the last-published policy snapshot (see DESIGN.md §5).
 - **Epoch Config Reload:** Transactional config updates with RCU reclamation.

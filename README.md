@@ -9,7 +9,7 @@ Leveraging **AF_XDP** for zero-copy I/O on supported physical NICs and a strict 
 - **AF_XDP Zero-Copy on Supported NICs:** Native-driver XDP with AF_XDP zero-copy on tested NICs (Intel E810, Mellanox CX-6); copy-mode and generic XDP exist as CI/dev fallbacks only and are refused in production by default.
 - **Strict Isolation Boundary:** v1 uses a single-copy boundary at the VM interface; guest memory is never DMA-mapped to the NIC. Logical UMEM slicing and strict descriptor bounds checking apply to host-owned frames.
 - **Anti-Spoofing & Steering:** L2/L3 identities are control-plane provisioned. v1 enforces MAC, IP, and VLAN bindings before conntrack; ARP and IPv6 ND guards are planned. (DHCP guard is out of scope until the DHCP plane is specified — see DESIGN.md §7.)
-- **Fail-Closed Security:** Missing config, unbound XSK, ring exhaustion, parse failures, and process exit default to `XDP_DROP`.
+- **Fail-Closed Security:** Unbound XSK and dataplane process exit return `XDP_DROP` at the BPF program level; missing config, parse failures, ring exhaustion, and ACL deny result in userspace drops with structured drop reasons.
 - **Routed Gateway with Selective Proxy:** v1 is a routed/NAT gateway. Selected flows (per ACL) are tagged for handoff to a downstream proxy/inspection service; the specific forwarding mechanism is deferred to a future design pass.
 - **Multi-Tenant Aware:** Flow classification includes tenant and VM IDs to enforce fairness and quotas.
 

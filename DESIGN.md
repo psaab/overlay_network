@@ -86,7 +86,6 @@ The following must be resolved before roadmap step 5 (Parser/anti-spoofing). Eac
 - **ARP / ND / DHCP plane** (§2): who answers ARP for the gateway IP, for other VM IPs (proxy-ARP), and for off-link IPs; RA emission policy; DHCP server vs relay vs neither; DHCPv4 and DHCPv6 separately.
 - **Control-plane API** (§3): identity record schema (VM-ID, MACs, IPv4/IPv6, VLAN, queue/core, tenant, conntrack zone, rate limits), lifecycle (register/update/drain/deregister), authorization model (mTLS, capability tokens), versioning.
 - **vhost-user feature mask** (§2): exact `VIRTIO_NET_F_*` and `VHOST_USER_PROTOCOL_F_*` bits negotiated in v1; `VIRTIO_F_IOMMU_PLATFORM` policy (GPA vs IOVA implications).
-- **AF_XDP buffer policy:** single-buffer vs multi-buffer; UMEM chunk size and headroom; max MTU and jumbo support.
 - **NIC / driver / kernel matrix:** tested combinations; behavior when AF_XDP falls back to copy mode.
 - **Drop-reason enum:** stable enum for telemetry/logs; ABI versioning.
 - **Slow-path threading:** ACL/conntrack-create/NAT-allocate inline on dataplane thread vs worker pool; DPI/proxy handoff queue and per-tenant fairness.
