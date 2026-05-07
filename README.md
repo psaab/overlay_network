@@ -12,7 +12,7 @@ Leveraging **AF_XDP** for zero-copy I/O on supported physical NICs and a strict 
 - **Strict Isolation Boundary:** v1 uses a single-copy boundary at the VM interface; guest memory is never DMA-mapped to the NIC. Logical UMEM slicing and strict descriptor bounds checking apply to host-owned frames.
 - **Anti-Spoofing & Steering:** L2/L3 identities are control-plane provisioned. v1 enforces MAC, IPv6, and VLAN bindings before conntrack. ND/RA guard is enforced on the VM-facing side: VM-sourced router advertisements are dropped, and VM-sourced NS/NA must match provisioned identity. (DHCPv6 guard depends on the chosen address-assignment plane — see DESIGN.md §7.)
 - **Fail-Closed Security:** Unbound XSK and dataplane process exit return `XDP_DROP` at the BPF program level; missing config, parse failures, ring exhaustion, and ACL deny result in userspace drops with structured drop reasons.
-- **IPv6 Routing Gateway with Selective Proxy:** Pure IPv6 L3 forwarding; no NAT/DNAT on the v1 hot path. Selected flows (per ACL) are tagged for handoff to a downstream proxy/inspection service; the forwarding mechanism is deferred. IPv4 traffic from VMs is dropped in v1 pending the future encapsulation design.
+- **IPv6 Routing Gateway with Selective Proxy:** Pure IPv6 L3 forwarding; no NAT/DNAT on the v1 hot path. Selected flows (per ACL) are tagged `forward-to-proxy`; the forwarding mechanism is deferred and tagged flows are dropped in v1 with reason `proxy_deferred` until the mechanism is chosen. IPv4 traffic from VMs is also dropped in v1, pending the future encapsulation design.
 - **Multi-Tenant Aware:** Flow classification includes tenant and VM IDs to enforce fairness and quotas.
 
 ## Architecture
@@ -35,7 +35,7 @@ The canonical roadmap is in [DESIGN.md §6](DESIGN.md). Headline phases:
 3. VM I/O proof (vhost-user single-copy)
 4. Buffer lifecycle & backpressure
 5. Parsers & Anti-Spoofing
-6. Conntrack & NAT
+6. Conntrack (no NAT in v1)
 7. Proxy Delivery Path
 8. DPI Metadata Classification
 9. Full DPI (if required)

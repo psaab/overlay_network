@@ -11,7 +11,7 @@ The system sits as a transparent, high-speed mediator between the VM's network i
 The primary mode for v1 is an **IPv6 routing gateway with selective proxy**. The physical network is IPv6-only. VMs receive globally-routable IPv6 addresses from subnets owned by the dataplane; the dataplane forwards IPv6 packets between VM-facing and physical-facing interfaces **without rewriting source or destination addresses**. There is no NAT/DNAT in the forwarding plane.
 
 - **IPv4 is out of scope for v1.** IPv4 packets from VMs (including IPv4-in-Ethernet, ARP) are dropped at parse stage with reason `non_ipv6_dropped`. IPv4 connectivity will be provided via encapsulation (e.g., 4in6 / MAP-T / DS-Lite-class) in a future revision.
-- **Gateway addressing:** the dataplane owns a link-local address (`fe80::/64`) on every VM-facing link and one or more global IPv6 addresses for routing presence. ND for the gateway is answered locally; ND for VM-owned addresses is answered via proxy-ND from the control-plane-provisioned identity table.
+- **Gateway addressing:** on every VM-facing link, the dataplane owns a link-local address (in the `fe80::/64` prefix, e.g., `fe80::1`) and one or more global IPv6 addresses for routing presence. ND for the gateway is answered locally; ND for VM-owned addresses is answered via proxy-ND from the control-plane-provisioned identity table.
 - **Physical-side routing:** the dataplane participates in IPv6 routing on the physical network. The mechanism (static config, RA-derived default, BGP, OSPFv3) is a v1 open question — see §7.
 - **VM IPv6 address assignment:** SLAAC via gateway-emitted RAs, DHCPv6, or pure control-plane provisioning. Choice is a v1 open question — see §7.
 - **ND/RA guard:** VM-sourced router advertisements are dropped (RA guard); VM-sourced NS/NA are validated against provisioned identity (ND guard).
@@ -43,7 +43,7 @@ Manages Fill, Completion, RX, and TX rings. The physical side uses AF_XDP, while
 A flow table tracking tenant/VM-ID, ingress interface, direction, L3 protocol, and normalized 5-tuple. It maintains full TCP state (SYN/ACK/FIN/RST) to prevent state exhaustion.
 
 ### 3.3. Firewall Rules Engine
-Evaluates packets against ACLs. Enforces anti-spoofing before conntrack (validating source MAC, source IPv6, and VLAN against provisioned VM identity). IPv6 packets with extension headers are parsed with bounded chain length; ambiguous chains are dropped. IPv6 fragments (unlike IPv4) carry the L4 header only in the first fragment and are reassembled upstream of anti-spoofing and conntrack — fragments are dropped if reassembly is disabled or fails. The dataplane does not fragment IPv6 packets; PMTU is communicated via ICMPv6 PTB (see §3.6, pending in DETAILED_DESIGN.md).
+Evaluates packets against ACLs. Enforces anti-spoofing before conntrack (validating source MAC, source IPv6, and VLAN against provisioned VM identity). IPv6 packets with extension headers are parsed with bounded chain length; ambiguous chains are dropped. IPv6 fragments are reassembled upstream of anti-spoofing and conntrack since the L4 header is only in the first fragment — fragments are dropped if reassembly is disabled or fails. The dataplane does not fragment IPv6 packets (RFC 8200 forbids router-side fragmentation); PMTU is communicated via ICMPv6 PTB (see DETAILED_DESIGN.md §3.5).
 
 ### 3.4. Deep Packet Inspection (DPI)
 - **Metadata classification:** Fast, low assurance.
@@ -89,9 +89,12 @@ The following must be resolved before roadmap step 5 (Parser/anti-spoofing). Eac
 - **VM IPv6 address assignment** (§2): SLAAC via gateway-emitted RAs, DHCPv6 (server vs relay), or pure control-plane provisioning. Sub-questions: per-VM /128 in a shared /64 vs /64 per VM; ULA vs GUA scope.
 - **Physical-side IPv6 routing participation** (§2): static routes only, RA-derived default route, or a dynamic protocol (BGP/OSPFv3); how the dataplane advertises VM-subnet reachability upstream.
 - **East-west (VM-to-VM) IPv6 forwarding** (§2): hairpinned in the dataplane vs round-tripped through the physical switch fabric; same ACL/conntrack pipeline as north-south or a fast intra-host path.
-- **ICMPv6 policy:** which error types the dataplane generates (Time Exceeded, PTB, Parameter Problem, Destination Unreachable); rate limits per (tenant, error-type); whether VMs may send ICMPv6 echoes to the gateway.
 - **IPv6 extension header policy:** which extension headers are allowed (Hop-by-Hop, Routing types 0/4, Fragment, Destination Options); maximum chain length; behavior on unrecognized next-header values.
-- **Multicast scope:** which IPv6 multicast scopes are forwarded vs locally-handled vs dropped (link-local for ND must work; site/global multicast policy TBD).
+- **DHCPv6 guard:** if DHCPv6 is selected as the address-assignment plane, which messages from VMs are allowed (CONFIRM/REQUEST/RENEW/REBIND from a registered client) vs dropped (server-class messages — ADVERTISE, REPLY, RECONFIGURE).
+- **`forward-to-proxy` v1 disposition:** tag-and-drop with `proxy_deferred` (current default), tag-and-pass-through (insecure), or tag-and-queue-for-future-mechanism. Affects whether the ACL action is even visible to operators in v1.
+- **Source-address selection (RFC 6724):** which gateway address sources dataplane-originated ICMPv6 errors when the gateway has multiple bindings on a link (link-local, ULA, multiple GUAs).
+- **Privacy/temporary addresses (RFC 8981):** if SLAAC is chosen, VMs will generate temporary addresses the control plane has not provisioned. Reconciling RFC 8981 with the strict provisioned-identity model — enrollment-on-first-use, prefix-scoped wildcarding, or banning temporary addresses — is open.
+- **MLD scope (RFC 3810):** v1 has no multicast forwarding, so MLD is functionally N/A; whether the dataplane generates MLDv2 reports for its own joined groups (e.g., solicited-node) and how that interacts with snooping switches is TBD.
 - **Control-plane API** (§3): identity record schema (VM-ID, MACs, IPv6 bindings, VLAN, queue/core, tenant, conntrack zone, rate limits), lifecycle (register/update/drain/deregister), authorization model (mTLS, capability tokens), versioning.
 - **vhost-user feature mask** (§2): exact `VIRTIO_NET_F_*` and `VHOST_USER_PROTOCOL_F_*` bits negotiated in v1; `VIRTIO_F_IOMMU_PLATFORM` policy (GPA vs IOVA implications).
 - **NIC / driver / kernel matrix:** tested combinations; behavior when AF_XDP falls back to copy mode.
