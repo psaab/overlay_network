@@ -9,13 +9,15 @@ This document defines the modular architecture for `XDP-Prox`, a userspace netwo
 
 ### 2.1 Memory Model: Logical Isolation & UMEM
 To achieve high-performance forwarding, the stack utilizes a contiguous UMEM region.
-- **Global Pool:** Shared for physical NIC I/O.
-- **Logical Isolation:** Slicing UMEM per-VM provides logical isolation. Strict descriptor bounds checking is enforced.
-- **Zero-Copy vs Single-Copy:** vhost-user descriptors and AF_XDP descriptors reference different memory domains. The baseline implementation copies packet bytes from guest buffers into AF_XDP UMEM on egress and from AF_XDP UMEM into guest buffers on ingress. Descriptor passing is allowed only if the selected architecture makes guest packet buffers valid AF_XDP UMEM frames and satisfies DMA isolation requirements.
+- **Per-NUMA UMEM Pools:** One UMEM pool per NUMA node; on a single-socket host this collapses to one pool. Each NIC RX/TX queue is bound to the UMEM on the queue's NUMA node so that DMA descriptors never cross sockets on the fast path.
+- **Logical Isolation:** Slicing UMEM per-VM provides logical isolation only — it is not a memory-protection boundary. Strict descriptor bounds checking is enforced. Hard isolation across trust zones requires a separate UMEM (and likely a separate process); see §7.
+- **Zero-Copy vs Single-Copy:** vhost-user descriptors and AF_XDP descriptors reference different memory domains. The baseline implementation copies packet bytes from guest buffers into AF_XDP UMEM on egress and from AF_XDP UMEM into guest buffers on ingress. Descriptor passing is allowed only if a future architecture makes guest packet buffers valid AF_XDP UMEM frames and satisfies DMA isolation requirements; out of scope for v1.
 
 ### 2.2 Offload Contract
-- Virtio-net features (TSO/GSO/GRO) are disabled in v1. 
-- Header rewrites recalculate Ethernet FCS, IPv4 checksums, and TCP/UDP pseudo-headers explicitly.
+- Virtio-net features (TSO/GSO/UFO/GRO/LRO, mergeable rxbuf, guest checksum-partial) are disabled in v1; re-enabled later behind correctness gates.
+- AF_XDP single-buffer mode in v1; max MTU 1500; UMEM chunk size 2048 bytes with 256-byte headroom (multi-buffer / jumbo deferred).
+- Header rewrites recalculate IPv4 header checksums and TCP/UDP checksums (including pseudo-header). Ethernet FCS is computed by the NIC on TX and stripped on RX — it is not present in host memory and is therefore not a concern for the dataplane.
+- IPv4 UDP checksum-zero is preserved on rewrite. IPv6 UDP requires non-zero checksums; the dataplane recomputes rather than passing through.
 
 ## 3. Module Breakdown
 
@@ -28,6 +30,10 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
       return bpf_redirect_map(&xsks_map, index, 0);
   return XDP_DROP; // Fail-closed
   ```
+- **TX completion drain:** Drained per RX poll iteration with a bounded per-iteration cap; UMEM frames are recycled to the FILL ring immediately on completion to prevent UMEM starvation under sustained load.
+- **Wakeup model:** `XDP_USE_NEED_WAKEUP` enabled; busy-poll on dataplane cores. Syscall wakeup paths are a fallback for low-rate queues.
+- **BPF map specs:** `xsks_map` is `BPF_MAP_TYPE_XSKMAP`, sized to NIC queue count, pinned at `/sys/fs/bpf/xdp-prox/xsks_map`. XDP program type is `BPF_PROG_TYPE_XDP`, attached to the physical NIC in native (driver) mode via `XDP_FLAGS_DRV_MODE`. Required capabilities (`CAP_BPF`, `CAP_NET_ADMIN`) are dropped after attach; `CAP_IPC_LOCK` is retained for UMEM mlock.
+- **Detach policy:** The XDP program remains attached on dataplane exit so traffic continues to fail-closed-DROP until explicitly detached by an operator command.
 
 ### 3.2 Module: Flow Classifier & Conntrack
 - **Multi-Tenant Awareness:** Flow key includes tenant/VM-ID, ingress interface, direction, L3 protocol, 5-tuple, and conntrack zone.
@@ -47,7 +53,7 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
 2. **Parse & Anti-Spoof:** Validate L2/L3 bounds and VM identity.
 3. **Lookup:** Flow Classifier check.
 4. **Slow Path:** ACLs, metadata DPI, Conntrack creation.
-5. **Proxy/NAT:** Rewrite headers; push to proxy namespace if required.
+5. **Forward Action:** Apply L3 routing rewrites (NAT, if any) and per-tenant rate limits. Flows tagged `forward-to-proxy` are queued for the deferred proxy delivery path (see DESIGN.md §2); in v1 they are dropped at this stage with reason `proxy_deferred`.
 6. **Egress:** TX backpressure handling (tail-drop if full).
 
 ## 5. Performance Targets & Budgets
@@ -61,5 +67,5 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
 - **Rust Safety:** Unsafe boundaries are explicitly audited. Packet buffers wrapped in safe types holding length and headroom.
 
 ## 7. Security Considerations
-- **Fail-Closed:** Default drop on missing config, dead proxy, or unparsed headers.
+- **Fail-Closed:** Default drop on missing config or unparsed headers. Control-plane crash retains the last-published policy snapshot (see DESIGN.md §5).
 - **Epoch Config Reload:** Transactional config updates with RCU reclamation.
