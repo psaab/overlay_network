@@ -14,7 +14,7 @@ The primary mode for v1 is an **IPv6 routing gateway with selective proxy**. The
 - **Gateway addressing:** on every VM-facing link, the dataplane owns a link-local address (in the `fe80::/64` prefix, e.g., `fe80::1`) and one or more global IPv6 addresses for routing presence. ND for the gateway is answered locally; ND for VM-owned addresses is answered via proxy-ND from the control-plane-provisioned identity table.
 - **Physical-side routing:** the dataplane participates in IPv6 routing on the physical network. The mechanism (static config, RA-derived default, BGP, OSPFv3) is a v1 open question — see §7.
 - **VM IPv6 address assignment:** SLAAC via gateway-emitted RAs, DHCPv6, or pure control-plane provisioning. Choice is a v1 open question — see §7.
-- **ND/RA guard:** VM-sourced router advertisements are dropped (RA guard); VM-sourced NS/NA are validated against provisioned identity (ND guard).
+- **ND/RA guard:** VM-sourced router advertisements are dropped (RA guard). VM-sourced NS/NA/RS are validated against provisioned identity (ND guard); link-local sources are permitted for on-link ND traffic, and `::` is permitted for DAD probes (NS) and pre-bootstrap router solicitations (RS). See DETAILED_DESIGN.md §3.3 for the precise rule set.
 - Selected flows (per ACL) are tagged `forward-to-proxy`. The forwarding mechanism is deferred; in v1 these flows are dropped at the forward stage with reason `proxy_deferred` until the mechanism is chosen.
 
 ### Core Technologies
@@ -91,7 +91,7 @@ The following must be resolved before roadmap step 5 (Parser/anti-spoofing). Eac
 - **East-west (VM-to-VM) IPv6 forwarding** (§2): hairpinned in the dataplane vs round-tripped through the physical switch fabric; same ACL/conntrack pipeline as north-south or a fast intra-host path.
 - **IPv6 extension header policy:** which extension headers are allowed (Hop-by-Hop, Routing types 0/4, Fragment, Destination Options); maximum chain length; behavior on unrecognized next-header values.
 - **DHCPv6 guard:** if DHCPv6 is selected as the address-assignment plane, which client messages from VMs are allowed (SOLICIT, REQUEST, CONFIRM, RENEW, REBIND, RELEASE, DECLINE, INFORMATION-REQUEST per RFC 8415) vs dropped (server-class messages — ADVERTISE, REPLY, RECONFIGURE; relay messages RELAY-FORW/RELAY-REPL only if the dataplane is itself a relay).
-- **Source-address selection (RFC 6724):** which gateway address sources dataplane-originated ICMPv6 errors when the gateway has multiple bindings on a link (link-local, ULA, multiple GUAs).
+- **Source-address selection (RFC 6724):** which gateway address sources dataplane-originated ICMPv6 errors when the gateway has multiple bindings on a link (link-local plus one or more GUAs in v1).
 - **Privacy/temporary addresses (RFC 8981):** if SLAAC is chosen, VMs will generate temporary addresses the control plane has not provisioned. Reconciling RFC 8981 with the strict provisioned-identity model — enrollment-on-first-use, prefix-scoped wildcarding, or banning temporary addresses — is open.
 - **MLD scope (RFC 3810):** v1 has no multicast forwarding, so MLD is functionally N/A; whether the dataplane generates MLDv2 reports for its own joined groups (e.g., solicited-node) and how that interacts with snooping switches is TBD.
 - **Control-plane API** (§3): identity record schema (VM-ID, MACs, IPv6 bindings, VLAN, queue/core, tenant, conntrack zone, rate limits), lifecycle (register/update/drain/deregister), authorization model (mTLS, capability tokens), versioning.
