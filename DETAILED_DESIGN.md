@@ -54,7 +54,8 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
   - **Hop-limit check (RFC 4861 §11.2):** all received ND messages must have IPv6 hop-limit = 255; otherwise dropped (`nd_hop_limit_invalid`). This prevents off-link spoofing of ND.
   - **Fragmentation (RFC 6980):** ND messages must not be fragmented; fragmented ND is dropped (`nd_fragmented_dropped`).
   - **ICMPv6 sanity:** code, length, and checksum are validated. Zero-length options drop with `nd_malformed` (would loop the parser). Unknown ND option types are silently ignored per RFC 4861 §4.6 — message processing continues with the recognized options.
-  - **Link-layer-address option validation (RFC 4861 §4.6.1):** when present, the SLLAO (Source Link-Layer Address option in NS/RS/RA) and TLLAO (Target Link-Layer Address option in NA/Redirect) must equal the VM's provisioned MAC. Mismatched options drop with `nd_lladdr_mismatch` to prevent neighbor-cache poisoning of the VM's own entries with a forged link-layer address.
+  - **Link-layer-address option validation (RFC 4861 §4.6.1):** for the VM-sourced ND messages that survive the rules above (NS, RS, NA), any SLLAO (in NS/RS) or TLLAO (in NA) must equal the VM's provisioned MAC. Mismatched options drop with `nd_lladdr_mismatch` to prevent neighbor-cache poisoning of the VM's own entries with a forged link-layer address. (RA and Redirect are already dropped unconditionally above; their option fields are never reached.)
+  - **`::`-source SLLAO prohibition (RFC 4861 §4.1, §7.1.1):** NS or RS with source `::` MUST NOT carry an SLLAO; presence of an SLLAO on such a packet is a protocol violation. Drop with `nd_unspecified_with_sllao` before the MAC-match step.
 - **Rate Limiting:** Applied before shared TX queues. Limits on bytes and packets-per-second (pps) to avoid CPU exhaustion. ICMPv6 generation by the dataplane is rate-limited per (tenant, error-type).
 
 ### 3.4 Module: Security Engine & Parsers
