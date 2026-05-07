@@ -15,7 +15,7 @@ The primary mode for v1 is an **IPv6 routing gateway with selective proxy**. The
 - **Physical-side routing:** the dataplane participates in IPv6 routing on the physical network. The mechanism (static config, RA-derived default, BGP, OSPFv3) is a v1 open question — see §7.
 - **VM IPv6 address assignment:** SLAAC via gateway-emitted RAs, DHCPv6, or pure control-plane provisioning. Choice is a v1 open question — see §7.
 - **ND/RA guard:** VM-sourced router advertisements are dropped (RA guard); VM-sourced NS/NA are validated against provisioned identity (ND guard).
-- Selected flows (per ACL) are tagged `forward-to-proxy` for handoff to a downstream service; the forwarding mechanism is deferred to a future design pass.
+- Selected flows (per ACL) are tagged `forward-to-proxy`. The forwarding mechanism is deferred; in v1 these flows are dropped at the forward stage with reason `proxy_deferred` until the mechanism is chosen.
 
 ### Core Technologies
 - **AF_XDP Sockets (XSK):** For raw, high-throughput packet I/O on netdev queues. Zero-copy is available only for supported native-XDP NIC drivers and only for buffers registered in AF_XDP UMEM. VM-facing TAP/veth and vhost-user paths have separate copy and feature-negotiation constraints.
@@ -55,7 +55,7 @@ Evaluates packets against ACLs. Enforces anti-spoofing before conntrack (validat
 2. **VM Ingress (Single-copy):** `XSK_RX UMEM frame -> copy into guest virtqueue buffer -> Vhost_TX completion`
 3. **VM Egress (Single-copy):** `Vhost_RX guest buffer -> copy into UMEM frame -> XSK_TX -> COMPLETION`
 
-Selected flows tagged `forward-to-proxy` are handed off to the (deferred) proxy delivery path described in §2; copy budget for that path will be defined when the mechanism is chosen.
+Selected flows tagged `forward-to-proxy` are dropped in v1 with reason `proxy_deferred`; the proxy delivery path is described in §2 and its copy budget will be defined when the mechanism is chosen.
 
 ## 5. Fail-Closed & Isolation Policy
 
@@ -86,12 +86,11 @@ Selected flows tagged `forward-to-proxy` are handed off to the (deferred) proxy 
 The following must be resolved before roadmap step 5 (Parser/anti-spoofing). Each is referenced from the relevant section above.
 
 - **Proxy / downstream-service forwarding mechanism** (§2): deferred to a future design pass — affects copy budget, original-destination metadata conveyance, and TCP/UDP scope. v1 only reserves the ACL action and conntrack hooks.
-- **VM IPv6 address assignment** (§2): SLAAC via gateway-emitted RAs, DHCPv6 (server vs relay), or pure control-plane provisioning. Sub-questions: per-VM /128 in a shared /64 vs /64 per VM; ULA vs GUA scope.
+- **VM IPv6 address assignment** (§2): SLAAC via gateway-emitted RAs, DHCPv6 (server vs relay), or pure control-plane provisioning. Sub-question: per-VM /128 in a shared /64 vs /64 per VM. (v1 commits to GUA; ULA support is deferred.)
 - **Physical-side IPv6 routing participation** (§2): static routes only, RA-derived default route, or a dynamic protocol (BGP/OSPFv3); how the dataplane advertises VM-subnet reachability upstream.
 - **East-west (VM-to-VM) IPv6 forwarding** (§2): hairpinned in the dataplane vs round-tripped through the physical switch fabric; same ACL/conntrack pipeline as north-south or a fast intra-host path.
 - **IPv6 extension header policy:** which extension headers are allowed (Hop-by-Hop, Routing types 0/4, Fragment, Destination Options); maximum chain length; behavior on unrecognized next-header values.
-- **DHCPv6 guard:** if DHCPv6 is selected as the address-assignment plane, which messages from VMs are allowed (CONFIRM/REQUEST/RENEW/REBIND from a registered client) vs dropped (server-class messages — ADVERTISE, REPLY, RECONFIGURE).
-- **`forward-to-proxy` v1 disposition:** tag-and-drop with `proxy_deferred` (current default), tag-and-pass-through (insecure), or tag-and-queue-for-future-mechanism. Affects whether the ACL action is even visible to operators in v1.
+- **DHCPv6 guard:** if DHCPv6 is selected as the address-assignment plane, which client messages from VMs are allowed (SOLICIT, REQUEST, CONFIRM, RENEW, REBIND, RELEASE, DECLINE, INFORMATION-REQUEST per RFC 8415) vs dropped (server-class messages — ADVERTISE, REPLY, RECONFIGURE; relay messages RELAY-FORW/RELAY-REPL only if the dataplane is itself a relay).
 - **Source-address selection (RFC 6724):** which gateway address sources dataplane-originated ICMPv6 errors when the gateway has multiple bindings on a link (link-local, ULA, multiple GUAs).
 - **Privacy/temporary addresses (RFC 8981):** if SLAAC is chosen, VMs will generate temporary addresses the control plane has not provisioned. Reconciling RFC 8981 with the strict provisioned-identity model — enrollment-on-first-use, prefix-scoped wildcarding, or banning temporary addresses — is open.
 - **MLD scope (RFC 3810):** v1 has no multicast forwarding, so MLD is functionally N/A; whether the dataplane generates MLDv2 reports for its own joined groups (e.g., solicited-node) and how that interacts with snooping switches is TBD.

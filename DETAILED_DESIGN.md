@@ -43,13 +43,13 @@ To achieve high-performance forwarding, the stack utilizes a contiguous UMEM reg
 - **State & Limits:** Full TCP/UDP state tracking. Per-core timer wheels for timeouts. Per-tenant memory quotas and SYN flood eviction.
 
 ### 3.3 Module: VM Steering & Anti-Spoofing
-- **Identity Verification:** Populate the Steering Table from control-plane VM identity. Observed source MACs may be logged, but untrusted VM traffic must not authoritatively update forwarding ownership. Enforce provisioned MAC, IPv6 (one or more global/ULA bindings per VM), and VLAN bindings before conntrack.
-- **Link-local handling:** VMs may use any RFC 4291-compliant link-local source (in `fe80::/64`) for ND traffic to the gateway, but must not use link-local as the source of forwarded (off-link) traffic.
+- **Identity Verification:** Populate the Steering Table from control-plane VM identity. Observed source MACs may be logged, but untrusted VM traffic must not authoritatively update forwarding ownership. Enforce provisioned MAC, IPv6 (one or more global IPv6 bindings per VM; v1 is GUA-only), and VLAN bindings before conntrack.
+- **Link-local handling:** VMs may use any RFC 4291-compliant link-local source (in `fe80::/64`) for on-link ND traffic (NS/NA/RS to or from any on-link host, including the gateway and other VMs), but must not use link-local as the source of forwarded (off-link) traffic.
 - **ND/RA guard rules** (per RFC 4861/4862; valid VM-sourced ND messages):
   - **NS (type 135):** allowed if either (a) source = VM's provisioned IPv6 or link-local AND target is a valid on-link address (gateway, another on-link host, or one of the VM's own addresses); or (b) source = unspecified `::` AND target = one of the VM's own provisioned addresses (Duplicate Address Detection per RFC 4862 §5.4).
-  - **NA (type 136):** allowed only if source = one of the VM's provisioned addresses AND the target address in the NA payload is also one of the VM's provisioned addresses. The R (Router) bit MUST be zero (VMs are not routers); NAs with R=1 are dropped.
+  - **NA (type 136):** allowed if source = any of the VM's provisioned addresses or its link-local address, AND the Target Address field in the NA payload is one of the VM's own addresses (provisioned or link-local). The R (Router) bit MUST be zero (VMs are not routers); NAs with R=1 are dropped.
   - **RA (type 134):** dropped unconditionally (RA guard, RFC 6105). VMs are never legitimate sources of router advertisements.
-  - **RS (type 133):** allowed from VM-provisioned source or `::`; the dataplane responds with an RA according to its RA-emission policy.
+  - **RS (type 133):** allowed from any of the VM's provisioned addresses, its link-local address, or `::` (initial bootstrap before any address is assigned); the dataplane responds with an RA according to its RA-emission policy.
   - **Redirect (type 137):** dropped unconditionally from VMs (only routers send Redirects).
   - **Hop-limit check (RFC 4861 §11.2):** all received ND messages must have IPv6 hop-limit = 255; otherwise dropped (`nd_hop_limit_invalid`). This prevents off-link spoofing of ND.
   - **Fragmentation (RFC 6980):** ND messages must not be fragmented; fragmented ND is dropped (`nd_fragmented_dropped`).
